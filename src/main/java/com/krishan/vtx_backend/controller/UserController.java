@@ -6,6 +6,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -103,7 +107,6 @@ public class UserController {
         if (stats.containsKey("problems")) user.setProblems(stats.get("problems"));
         if (stats.containsKey("streak")) user.setStreak(stats.get("streak"));
 
-        // Auto rank update based on score
         List<User> allUsers = userRepository.findAll();
         allUsers.sort((a, b) -> b.getScore() - a.getScore());
         for (int i = 0; i < allUsers.size(); i++) {
@@ -116,5 +119,106 @@ public class UserController {
         res.put("score", user.getScore());
         res.put("rank", user.getRank());
         return ResponseEntity.ok(res);
+    }
+
+    // GitHub Real Data API
+    @GetMapping("/github/{username}")
+    public ResponseEntity<?> getGithubUser(@PathVariable String username) {
+        try {
+            URL url = new URL("https://api.github.com/users/" + username);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("User-Agent", "VortexApp");
+
+            int status = conn.getResponseCode();
+            if (status != 200) {
+                HashMap<String, Object> err = new HashMap<>();
+                err.put("error", "GitHub user not found");
+                return ResponseEntity.badRequest().body(err);
+            }
+
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line);
+            reader.close();
+
+            // Raw JSON string return karo
+            return ResponseEntity.ok()
+                    .header("Content-Type", "application/json")
+                    .body(sb.toString());
+
+        } catch (Exception e) {
+            HashMap<String, Object> err = new HashMap<>();
+            err.put("error", "GitHub fetch failed: " + e.getMessage());
+            return ResponseEntity.badRequest().body(err);
+        }
+    }
+
+    // LeetCode Real Data API
+    @GetMapping("/leetcode/{username}")
+    public ResponseEntity<?> getLeetcodeUser(@PathVariable String username) {
+        try {
+            String query = "{\"query\":\"{ matchedUser(username: \\\"" + username + "\\\") { username submitStats: submitStatsGlobal { acSubmissionNum { difficulty count } } profile { ranking } } }\"}";
+
+            URL url = new URL("https://leetcode.com/graphql");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            conn.setRequestProperty("Referer", "https://leetcode.com");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+
+            conn.getOutputStream().write(query.getBytes());
+
+            int status = conn.getResponseCode();
+            if (status != 200) {
+                HashMap<String, Object> err = new HashMap<>();
+                err.put("error", "LeetCode user not found");
+                return ResponseEntity.badRequest().body(err);
+            }
+
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line);
+            reader.close();
+
+            return ResponseEntity.ok()
+                    .header("Content-Type", "application/json")
+                    .body(sb.toString());
+
+        } catch (Exception e) {
+            HashMap<String, Object> err = new HashMap<>();
+            err.put("error", "LeetCode fetch failed: " + e.getMessage());
+            return ResponseEntity.badRequest().body(err);
+        }
+    }
+    // Search users by name
+    @GetMapping("/search")
+    public ResponseEntity<?> searchUsers(@RequestParam String query) {
+        List<User> users = userRepository.findAll();
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (User u : users) {
+            if (u.getName().toLowerCase().contains(query.toLowerCase()) ||
+                    (u.getGithubUsername() != null && u.getGithubUsername().toLowerCase().contains(query.toLowerCase()))) {
+
+                HashMap<String, Object> m = new HashMap<>();
+                m.put("name", u.getName());
+                m.put("score", u.getScore());
+                m.put("rank", u.getRank());
+                m.put("problems", u.getProblems());
+                m.put("githubUsername", u.getGithubUsername() != null ? u.getGithubUsername() : "");
+                m.put("leetcodeUsername", u.getLeetcodeUsername() != null ? u.getLeetcodeUsername() : "");
+                result.add(m);
+            }
+        }
+        return ResponseEntity.ok(result);
     }
 }
