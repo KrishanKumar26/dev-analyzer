@@ -5,6 +5,8 @@ import com.krishan.vtx_backend.service.AuthService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
@@ -20,7 +22,7 @@ public class AuthController {
         try {
             return ResponseEntity.ok(authService.register(req));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
     }
 
@@ -29,7 +31,7 @@ public class AuthController {
         try {
             return ResponseEntity.ok(authService.login(req));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
     }
 }
