@@ -707,7 +707,7 @@ public class UserController {
 
     // Google Gemini generateContent POST (API key as query param)
     private String geminiPost(String jsonBody) throws IOException {
-        URL url = new URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="
+        URL url = new URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key="
                 + geminiApiKey);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
