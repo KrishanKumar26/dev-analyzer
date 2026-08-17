@@ -35,9 +35,9 @@ public class UserController {
     @Value("${github.token:}")
     private String githubToken;
 
-    // Optional Anthropic (Claude) API key for AI Career Coach
-    @Value("${anthropic.api.key:}")
-    private String anthropicApiKey;
+    // Optional Google Gemini API key for AI Career Coach (free tier)
+    @Value("${gemini.api.key:}")
+    private String geminiApiKey;
 
     public UserController(UserRepository userRepository) {
         this.userRepository = userRepository;
@@ -623,10 +623,10 @@ public class UserController {
         return new int[]{score, solved};
     }
 
-    // Real AI Career Coach — Claude (Anthropic) se personalized insights
+    // Real AI Career Coach — Google Gemini (free) se personalized insights
     @PostMapping("/ai-coach")
     public ResponseEntity<?> aiCoach(@RequestBody(required = false) Map<String, Object> reqBody) {
-        if (anthropicApiKey == null || anthropicApiKey.isBlank()) {
+        if (geminiApiKey == null || geminiApiKey.isBlank()) {
             HashMap<String, Object> err = new HashMap<>();
             err.put("error", "AI coach not configured");
             return ResponseEntity.status(503).body(err);
@@ -665,24 +665,28 @@ public class UserController {
         try {
             ObjectMapper om = new ObjectMapper();
             ObjectNode root = om.createObjectNode();
-            root.put("model", "claude-opus-5");
-            root.put("max_tokens", 2048);
-            root.put("system", system);
-            ObjectNode outputConfig = root.putObject("output_config");
-            outputConfig.put("effort", "low");
-            ArrayNode messages = root.putArray("messages");
-            ObjectNode msg = messages.addObject();
-            msg.put("role", "user");
-            msg.put("content", userPrompt);
 
-            String respBody = anthropicPost(om.writeValueAsString(root));
+            // System instruction
+            ObjectNode sysInstr = root.putObject("systemInstruction");
+            sysInstr.putArray("parts").addObject().put("text", system);
+
+            // User content
+            ArrayNode contents = root.putArray("contents");
+            ObjectNode content = contents.addObject();
+            content.put("role", "user");
+            content.putArray("parts").addObject().put("text", userPrompt);
+
+            // Generation config
+            ObjectNode genConfig = root.putObject("generationConfig");
+            genConfig.put("maxOutputTokens", 600);
+            genConfig.put("temperature", 0.7);
+
+            String respBody = geminiPost(om.writeValueAsString(root));
             JsonNode d = om.readTree(respBody);
 
             StringBuilder out = new StringBuilder();
-            for (JsonNode block : d.path("content")) {
-                if ("text".equals(block.path("type").asText())) {
-                    out.append(block.path("text").asText());
-                }
+            for (JsonNode part : d.path("candidates").path(0).path("content").path("parts")) {
+                out.append(part.path("text").asText());
             }
             if (out.length() == 0) {
                 HashMap<String, Object> err = new HashMap<>();
@@ -701,14 +705,13 @@ public class UserController {
         }
     }
 
-    // Anthropic Messages API POST (x-api-key auth)
-    private String anthropicPost(String jsonBody) throws IOException {
-        URL url = new URL("https://api.anthropic.com/v1/messages");
+    // Google Gemini generateContent POST (API key as query param)
+    private String geminiPost(String jsonBody) throws IOException {
+        URL url = new URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="
+                + geminiApiKey);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("x-api-key", anthropicApiKey);
-        conn.setRequestProperty("anthropic-version", "2023-06-01");
         conn.setDoOutput(true);
         conn.setConnectTimeout(10000);
         conn.setReadTimeout(90000);
