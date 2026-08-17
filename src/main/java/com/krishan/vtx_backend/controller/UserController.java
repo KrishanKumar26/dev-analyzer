@@ -67,13 +67,13 @@ public class UserController {
         if (updates.containsKey("name") && !updates.get("name").isEmpty())
             user.setName(updates.get("name"));
         if (updates.containsKey("githubUsername"))
-            user.setGithubUsername(updates.get("githubUsername"));
+            user.setGithubUsername(cleanHandle(updates.get("githubUsername")));
         if (updates.containsKey("leetcodeUsername"))
-            user.setLeetcodeUsername(updates.get("leetcodeUsername"));
+            user.setLeetcodeUsername(cleanHandle(updates.get("leetcodeUsername")));
         if (updates.containsKey("codeforcesUsername"))
-            user.setCodeforcesUsername(updates.get("codeforcesUsername"));
+            user.setCodeforcesUsername(cleanHandle(updates.get("codeforcesUsername")));
         if (updates.containsKey("hackerrankUsername"))
-            user.setHackerrankUsername(updates.get("hackerrankUsername"));
+            user.setHackerrankUsername(cleanHandle(updates.get("hackerrankUsername")));
 
         userRepository.save(user);
 
@@ -85,6 +85,14 @@ public class UserController {
         res.put("codeforcesUsername", user.getCodeforcesUsername() != null ? user.getCodeforcesUsername() : "");
         res.put("hackerrankUsername", user.getHackerrankUsername() != null ? user.getHackerrankUsername() : "");
         return ResponseEntity.ok(res);
+    }
+
+    // Username saaf karo: spaces hatao aur leading @ hatao (common typos)
+    private String cleanHandle(String raw) {
+        if (raw == null) return null;
+        String h = raw.trim().replaceAll("\\s+", "");
+        while (h.startsWith("@")) h = h.substring(1);
+        return h;
     }
 
     @GetMapping("/leaderboard")
