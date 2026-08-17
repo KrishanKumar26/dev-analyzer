@@ -25,6 +25,12 @@ public class User {
     private String codeforcesUsername;
     private String hackerrankUsername;
 
+    // Per-platform score breakdown (last sync pe bhara jaata hai) — chart ke liye
+    private int githubScore = 0;
+    private int leetcodeScore = 0;
+    private int codeforcesScore = 0;
+    private int hackerrankScore = 0;
+
     public Long getId() { return id; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -48,4 +54,12 @@ public class User {
     public void setCodeforcesUsername(String c) { this.codeforcesUsername = c; }
     public String getHackerrankUsername() { return hackerrankUsername; }
     public void setHackerrankUsername(String h) { this.hackerrankUsername = h; }
+    public int getGithubScore() { return githubScore; }
+    public void setGithubScore(int s) { this.githubScore = s; }
+    public int getLeetcodeScore() { return leetcodeScore; }
+    public void setLeetcodeScore(int s) { this.leetcodeScore = s; }
+    public int getCodeforcesScore() { return codeforcesScore; }
+    public void setCodeforcesScore(int s) { this.codeforcesScore = s; }
+    public int getHackerrankScore() { return hackerrankScore; }
+    public void setHackerrankScore(int s) { this.hackerrankScore = s; }
 }
