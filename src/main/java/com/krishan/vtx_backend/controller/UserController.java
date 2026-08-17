@@ -317,13 +317,90 @@ public class UserController {
         }
     }
 
+    // Auto-sync: connected platforms ka real data laakar Dev Score + problems compute karo,
+    // save karo, aur sabki rank dobara nikaalo. Manual entry ki zaroorat khatam.
+    @PutMapping("/sync")
+    public ResponseEntity<?> syncStats() {
+        String email = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        int score = 0;
+        int problems = 0;
+        HashMap<String, Object> breakdown = new HashMap<>();
+
+        // LeetCode
+        if (user.getLeetcodeUsername() != null && !user.getLeetcodeUsername().isBlank()) {
+            try {
+                int[] lc = leetcodeStats(user.getLeetcodeUsername());
+                score += lc[0];
+                problems += lc[1];
+                breakdown.put("leetcode", lc[0]);
+            } catch (Exception ignore) { }
+        }
+        // Codeforces
+        if (user.getCodeforcesUsername() != null && !user.getCodeforcesUsername().isBlank()) {
+            try {
+                int[] cf = codeforcesStats(user.getCodeforcesUsername());
+                score += cf[0];
+                problems += cf[1];
+                breakdown.put("codeforces", cf[0]);
+            } catch (Exception ignore) { }
+        }
+        // GitHub
+        if (user.getGithubUsername() != null && !user.getGithubUsername().isBlank()) {
+            try {
+                int gh = githubScore(user.getGithubUsername());
+                score += gh;
+                breakdown.put("github", gh);
+            } catch (Exception ignore) { }
+        }
+        // HackerRank
+        if (user.getHackerrankUsername() != null && !user.getHackerrankUsername().isBlank()) {
+            try {
+                int[] hr = hackerrankStats(user.getHackerrankUsername());
+                score += hr[0];
+                problems += hr[1];
+                breakdown.put("hackerrank", hr[0]);
+            } catch (Exception ignore) { }
+        }
+
+        user.setScore(score);
+        user.setProblems(problems);
+        userRepository.save(user);
+
+        // Sabki rank dobara compute karo
+        List<User> allUsers = userRepository.findAll();
+        allUsers.sort((a, b) -> b.getScore() - a.getScore());
+        for (int i = 0; i < allUsers.size(); i++) {
+            allUsers.get(i).setRank(i + 1);
+            userRepository.save(allUsers.get(i));
+        }
+
+        HashMap<String, Object> res = new HashMap<>();
+        res.put("message", "Stats synced from your platforms!");
+        res.put("score", user.getScore());
+        res.put("problems", user.getProblems());
+        res.put("rank", user.getRank());
+        res.put("breakdown", breakdown);
+        return ResponseEntity.ok(res);
+    }
+
     // Chhota helper: GET request + response body string (2xx ho ya error, dono padho)
     private String httpGet(String urlStr) throws IOException {
+        return httpGet(urlStr, null);
+    }
+
+    private String httpGet(String urlStr, String bearer) throws IOException {
         URL url = new URL(urlStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
         conn.setRequestProperty("User-Agent", "Mozilla/5.0");
         conn.setRequestProperty("Accept", "application/json");
+        if (bearer != null && !bearer.isBlank()) {
+            conn.setRequestProperty("Authorization", "Bearer " + bearer);
+        }
         conn.setConnectTimeout(8000);
         conn.setReadTimeout(8000);
 
@@ -335,6 +412,96 @@ public class UserController {
             while ((line = reader.readLine()) != null) sb.append(line);
         }
         return sb.toString();
+    }
+
+    // POST helper (LeetCode GraphQL ke liye)
+    private String httpPost(String urlStr, String jsonBody) throws IOException {
+        URL url = new URL(urlStr);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+        conn.setRequestProperty("Referer", "https://leetcode.com");
+        conn.setDoOutput(true);
+        conn.setConnectTimeout(8000);
+        conn.setReadTimeout(8000);
+        conn.getOutputStream().write(jsonBody.getBytes());
+
+        int status = conn.getResponseCode();
+        InputStream is = (status >= 200 && status < 400) ? conn.getInputStream() : conn.getErrorStream();
+        StringBuilder sb = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line);
+        }
+        return sb.toString();
+    }
+
+    // ---- Per-platform score calculators (used by /sync). Har ek {score, solved} deta hai ----
+
+    private int[] leetcodeStats(String username) throws IOException {
+        String query = "{\"query\":\"{ matchedUser(username: \\\"" + username
+                + "\\\") { submitStats: submitStatsGlobal { acSubmissionNum { difficulty count } } } }\"}";
+        JsonNode d = new ObjectMapper().readTree(httpPost("https://leetcode.com/graphql", query));
+        JsonNode arr = d.path("data").path("matchedUser").path("submitStats").path("acSubmissionNum");
+        int easy = 0, med = 0, hard = 0, total = 0;
+        for (JsonNode n : arr) {
+            int c = n.path("count").asInt(0);
+            switch (n.path("difficulty").asText("")) {
+                case "Easy": easy = c; break;
+                case "Medium": med = c; break;
+                case "Hard": hard = c; break;
+                case "All": total = c; break;
+                default: break;
+            }
+        }
+        int score = easy * 10 + med * 30 + hard * 50;
+        return new int[]{score, total};
+    }
+
+    private int[] codeforcesStats(String username) throws IOException {
+        ObjectMapper om = new ObjectMapper();
+        JsonNode info = om.readTree(httpGet("https://codeforces.com/api/user.info?handles=" + username));
+        if (!"OK".equals(info.path("status").asText())) return new int[]{0, 0};
+        int rating = info.path("result").get(0).path("rating").asInt(0);
+
+        int solved = 0;
+        try {
+            JsonNode st = om.readTree(httpGet(
+                    "https://codeforces.com/api/user.status?handle=" + username + "&from=1&count=10000"));
+            if ("OK".equals(st.path("status").asText())) {
+                Set<String> done = new HashSet<>();
+                for (JsonNode s : st.path("result")) {
+                    if ("OK".equals(s.path("verdict").asText())) {
+                        JsonNode p = s.path("problem");
+                        done.add(p.path("contestId").asText() + p.path("index").asText());
+                    }
+                }
+                solved = done.size();
+            }
+        } catch (Exception ignore) { /* rating se score to mil hi jayega */ }
+
+        int score = solved * 20 + Math.max(0, rating - 1000);
+        return new int[]{score, solved};
+    }
+
+    private int githubScore(String username) throws IOException {
+        JsonNode d = new ObjectMapper().readTree(httpGet("https://api.github.com/users/" + username, githubToken));
+        int repos = d.path("public_repos").asInt(0);
+        int followers = d.path("followers").asInt(0);
+        return repos * 5 + followers * 10;
+    }
+
+    private int[] hackerrankStats(String username) throws IOException {
+        JsonNode d = new ObjectMapper().readTree(
+                httpGet("https://www.hackerrank.com/rest/hackers/" + username + "/badges"));
+        int stars = 0, solved = 0;
+        for (JsonNode m : d.path("models")) {
+            stars += m.path("total_stars").asInt(0);
+            solved += m.path("solved").asInt(0);
+        }
+        int score = stars * 20 + solved * 5;
+        return new int[]{score, solved};
     }
 
     // Search users by name
