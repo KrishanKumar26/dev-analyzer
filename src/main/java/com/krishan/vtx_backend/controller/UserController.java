@@ -97,6 +97,9 @@ public class UserController {
 
     @GetMapping("/leaderboard")
     public ResponseEntity<?> getLeaderboard() {
+        String myEmail = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+
         List<User> users = userRepository.findAll();
         users.sort((a, b) -> b.getScore() - a.getScore());
 
@@ -110,9 +113,32 @@ public class UserController {
             m.put("rank", i + 1);
             m.put("platform", u.getGithubUsername() != null && !u.getGithubUsername().isEmpty()
                     ? "GitHub" : "LeetCode");
+            // Email se pehchano (naam se nahi) — duplicate naam pe galat highlight na ho
+            m.put("isMe", u.getEmail() != null && u.getEmail().equals(myEmail));
             leaderboard.add(m);
         }
         return ResponseEntity.ok(leaderboard);
+    }
+
+    // Apna account delete karo (aur ranks dobara compute)
+    @DeleteMapping("/account")
+    public ResponseEntity<?> deleteAccount() {
+        String email = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        userRepository.delete(user);
+
+        List<User> allUsers = userRepository.findAll();
+        allUsers.sort((a, b) -> b.getScore() - a.getScore());
+        for (int i = 0; i < allUsers.size(); i++) {
+            allUsers.get(i).setRank(i + 1);
+            userRepository.save(allUsers.get(i));
+        }
+
+        HashMap<String, Object> res = new HashMap<>();
+        res.put("message", "Account deleted");
+        return ResponseEntity.ok(res);
     }
 
     @PutMapping("/update-stats")
@@ -401,12 +427,15 @@ public class UserController {
                 breakdown.put("codeforces", cf[0]);
             } catch (Exception ignore) { }
         }
-        // GitHub
+        // GitHub (score + real streak from contribution calendar)
         if (user.getGithubUsername() != null && !user.getGithubUsername().isBlank()) {
             try {
                 int gh = githubScore(user.getGithubUsername());
                 score += gh;
                 breakdown.put("github", gh);
+            } catch (Exception ignore) { }
+            try {
+                user.setStreak(githubStreak(user.getGithubUsername()));
             } catch (Exception ignore) { }
         }
         // HackerRank
@@ -551,6 +580,27 @@ public class UserController {
         int repos = d.path("public_repos").asInt(0);
         int followers = d.path("followers").asInt(0);
         return repos * 5 + followers * 10;
+    }
+
+    // Current streak = aaj/kal se peeche lagataar kitne din contribution hai
+    private int githubStreak(String username) throws IOException {
+        String query = "{\"query\":\"query { user(login: \\\"" + username
+                + "\\\") { contributionsCollection { contributionCalendar { weeks { contributionDays { contributionCount } } } } } }\"}";
+        JsonNode cal = new ObjectMapper().readTree(httpPost("https://api.github.com/graphql", query, githubToken))
+                .path("data").path("user").path("contributionsCollection").path("contributionCalendar");
+
+        List<Integer> counts = new ArrayList<>();
+        for (JsonNode week : cal.path("weeks")) {
+            for (JsonNode day : week.path("contributionDays")) {
+                counts.add(day.path("contributionCount").asInt(0));
+            }
+        }
+
+        int i = counts.size() - 1;
+        int streak = 0;
+        if (i >= 0 && counts.get(i) == 0) i--; // aaj ka din 0 ho to skip (abhi tak commit nahi kiya)
+        while (i >= 0 && counts.get(i) > 0) { streak++; i--; }
+        return streak;
     }
 
     private int[] hackerrankStats(String username) throws IOException {
