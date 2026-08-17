@@ -44,6 +44,7 @@ public class UserController {
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
         HashMap<String, Object> response = new HashMap<>();
+        response.put("id", user.getId());
         response.put("name", user.getName());
         response.put("email", user.getEmail());
         response.put("score", user.getScore());
