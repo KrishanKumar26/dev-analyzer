@@ -2,6 +2,7 @@ package com.krishan.vtx_backend.controller;
 
 import com.krishan.vtx_backend.model.User;
 import com.krishan.vtx_backend.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
@@ -20,6 +21,10 @@ import java.util.Map;
 public class UserController {
 
     private final UserRepository userRepository;
+
+    // Optional GitHub token: agar set hai to 5000 req/hour, warna sirf 60/hour (rate-limited)
+    @Value("${github.token:}")
+    private String githubToken;
 
     public UserController(UserRepository userRepository) {
         this.userRepository = userRepository;
@@ -128,14 +133,27 @@ public class UserController {
             URL url = new URL("https://api.github.com/users/" + username);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
-            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("Accept", "application/vnd.github+json");
             conn.setRequestProperty("User-Agent", "VortexApp");
+            // Token ho to authenticate karo -> rate limit 60/hr se 5000/hr
+            if (githubToken != null && !githubToken.isBlank()) {
+                conn.setRequestProperty("Authorization", "Bearer " + githubToken);
+            }
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
 
             int status = conn.getResponseCode();
             if (status != 200) {
                 HashMap<String, Object> err = new HashMap<>();
-                err.put("error", "GitHub user not found");
-                return ResponseEntity.badRequest().body(err);
+                if (status == 404) {
+                    err.put("error", "GitHub user not found");
+                } else if (status == 403 || status == 429) {
+                    // Rate limit hit — isko "not found" mat dikhao, warna galat message jaata hai
+                    err.put("error", "GitHub rate limit reached, thodi der baad try karo");
+                } else {
+                    err.put("error", "GitHub request failed (status " + status + ")");
+                }
+                return ResponseEntity.status(status == 404 ? 404 : 502).body(err);
             }
 
             BufferedReader reader = new BufferedReader(
