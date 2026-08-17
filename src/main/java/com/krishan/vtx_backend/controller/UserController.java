@@ -189,6 +189,46 @@ public class UserController {
         }
     }
 
+    // GitHub Contributions (asli heatmap) — GraphQL API, token zaroori
+    @GetMapping("/github-contributions/{username}")
+    public ResponseEntity<?> getGithubContributions(@PathVariable String username) {
+        try {
+            String query = "{\"query\":\"query { user(login: \\\"" + username
+                    + "\\\") { contributionsCollection { contributionCalendar { totalContributions weeks { contributionDays { date contributionCount } } } } } }\"}";
+
+            String body = httpPost("https://api.github.com/graphql", query, githubToken);
+            JsonNode d = new ObjectMapper().readTree(body);
+            JsonNode cal = d.path("data").path("user")
+                    .path("contributionsCollection").path("contributionCalendar");
+
+            if (cal.isMissingNode() || cal.path("weeks").isMissingNode()) {
+                HashMap<String, Object> err = new HashMap<>();
+                err.put("error", "GitHub contributions not available");
+                return ResponseEntity.status(404).body(err);
+            }
+
+            List<Map<String, Object>> days = new ArrayList<>();
+            for (JsonNode week : cal.path("weeks")) {
+                for (JsonNode day : week.path("contributionDays")) {
+                    HashMap<String, Object> m = new HashMap<>();
+                    m.put("date", day.path("date").asText(""));
+                    m.put("count", day.path("contributionCount").asInt(0));
+                    days.add(m);
+                }
+            }
+
+            HashMap<String, Object> res = new HashMap<>();
+            res.put("totalContributions", cal.path("totalContributions").asInt(0));
+            res.put("days", days);
+            return ResponseEntity.ok(res);
+
+        } catch (Exception e) {
+            HashMap<String, Object> err = new HashMap<>();
+            err.put("error", "GitHub contributions fetch failed: " + e.getMessage());
+            return ResponseEntity.status(502).body(err);
+        }
+    }
+
     // LeetCode Real Data API
     @GetMapping("/leetcode/{username}")
     public ResponseEntity<?> getLeetcodeUser(@PathVariable String username) {
@@ -422,14 +462,22 @@ public class UserController {
         return sb.toString();
     }
 
-    // POST helper (LeetCode GraphQL ke liye)
+    // POST helper. bearer null ho to LeetCode ke liye (Referer set), warna GitHub GraphQL (auth token)
     private String httpPost(String urlStr, String jsonBody) throws IOException {
+        return httpPost(urlStr, jsonBody, null);
+    }
+
+    private String httpPost(String urlStr, String jsonBody, String bearer) throws IOException {
         URL url = new URL(urlStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-        conn.setRequestProperty("Referer", "https://leetcode.com");
+        if (bearer != null && !bearer.isBlank()) {
+            conn.setRequestProperty("Authorization", "Bearer " + bearer);
+        } else {
+            conn.setRequestProperty("Referer", "https://leetcode.com");
+        }
         conn.setDoOutput(true);
         conn.setConnectTimeout(8000);
         conn.setReadTimeout(8000);
