@@ -1,5 +1,7 @@
 package com.krishan.vtx_backend.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.krishan.vtx_backend.model.User;
 import com.krishan.vtx_backend.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -8,13 +10,17 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/user")
@@ -217,6 +223,120 @@ public class UserController {
             return ResponseEntity.badRequest().body(err);
         }
     }
+    // Codeforces Real Data API
+    @GetMapping("/codeforces/{username}")
+    public ResponseEntity<?> getCodeforcesUser(@PathVariable String username) {
+        try {
+            ObjectMapper om = new ObjectMapper();
+
+            // 1) Rating / rank
+            String infoBody = httpGet("https://codeforces.com/api/user.info?handles=" + username);
+            JsonNode info = om.readTree(infoBody);
+            if (!"OK".equals(info.path("status").asText())) {
+                HashMap<String, Object> err = new HashMap<>();
+                err.put("error", "Codeforces user not found");
+                return ResponseEntity.status(404).body(err);
+            }
+            JsonNode u = info.path("result").get(0);
+
+            HashMap<String, Object> res = new HashMap<>();
+            res.put("handle", u.path("handle").asText(username));
+            res.put("rating", u.path("rating").asInt(0));
+            res.put("maxRating", u.path("maxRating").asInt(0));
+            res.put("rank", u.path("rank").asText(""));
+            res.put("maxRank", u.path("maxRank").asText(""));
+
+            // 2) Solved count (best-effort, last 10k submissions to bound memory)
+            int solved = 0;
+            try {
+                String statusBody = httpGet(
+                        "https://codeforces.com/api/user.status?handle=" + username + "&from=1&count=10000");
+                JsonNode st = om.readTree(statusBody);
+                if ("OK".equals(st.path("status").asText())) {
+                    Set<String> done = new HashSet<>();
+                    for (JsonNode s : st.path("result")) {
+                        if ("OK".equals(s.path("verdict").asText())) {
+                            JsonNode p = s.path("problem");
+                            done.add(p.path("contestId").asText() + p.path("index").asText());
+                        }
+                    }
+                    solved = done.size();
+                }
+            } catch (Exception ignore) { /* rating abhi bhi return ho jayega */ }
+            res.put("solved", solved);
+
+            return ResponseEntity.ok(res);
+
+        } catch (Exception e) {
+            HashMap<String, Object> err = new HashMap<>();
+            err.put("error", "Codeforces fetch failed: " + e.getMessage());
+            return ResponseEntity.status(502).body(err);
+        }
+    }
+
+    // HackerRank Real Data API (badges)
+    @GetMapping("/hackerrank/{username}")
+    public ResponseEntity<?> getHackerrankUser(@PathVariable String username) {
+        try {
+            ObjectMapper om = new ObjectMapper();
+            String body = httpGet("https://www.hackerrank.com/rest/hackers/" + username + "/badges");
+            JsonNode d = om.readTree(body);
+
+            if (!d.path("status").asBoolean(false)) {
+                HashMap<String, Object> err = new HashMap<>();
+                err.put("error", "HackerRank user not found");
+                return ResponseEntity.status(404).body(err);
+            }
+
+            List<Map<String, Object>> badges = new ArrayList<>();
+            int totalStars = 0;
+            int totalSolved = 0;
+            for (JsonNode m : d.path("models")) {
+                HashMap<String, Object> b = new HashMap<>();
+                b.put("name", m.path("badge_name").asText(""));
+                int stars = m.path("total_stars").asInt(0);
+                int bSolved = m.path("solved").asInt(0);
+                b.put("stars", stars);
+                b.put("solved", bSolved);
+                badges.add(b);
+                totalStars += stars;
+                totalSolved += bSolved;
+            }
+
+            HashMap<String, Object> res = new HashMap<>();
+            res.put("username", username);
+            res.put("badges", badges);
+            res.put("totalStars", totalStars);
+            res.put("totalSolved", totalSolved);
+            return ResponseEntity.ok(res);
+
+        } catch (Exception e) {
+            HashMap<String, Object> err = new HashMap<>();
+            err.put("error", "HackerRank fetch failed: " + e.getMessage());
+            return ResponseEntity.status(502).body(err);
+        }
+    }
+
+    // Chhota helper: GET request + response body string (2xx ho ya error, dono padho)
+    private String httpGet(String urlStr) throws IOException {
+        URL url = new URL(urlStr);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setConnectTimeout(8000);
+        conn.setReadTimeout(8000);
+
+        int status = conn.getResponseCode();
+        InputStream is = (status >= 200 && status < 400) ? conn.getInputStream() : conn.getErrorStream();
+        StringBuilder sb = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line);
+        }
+        return sb.toString();
+    }
+
     // Search users by name
     @GetMapping("/search")
     public ResponseEntity<?> searchUsers(@RequestParam String query) {
