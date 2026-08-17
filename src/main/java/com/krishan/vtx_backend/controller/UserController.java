@@ -2,6 +2,8 @@ package com.krishan.vtx_backend.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.krishan.vtx_backend.model.User;
 import com.krishan.vtx_backend.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,6 +17,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -31,6 +34,10 @@ public class UserController {
     // Optional GitHub token: agar set hai to 5000 req/hour, warna sirf 60/hour (rate-limited)
     @Value("${github.token:}")
     private String githubToken;
+
+    // Optional Anthropic (Claude) API key for AI Career Coach
+    @Value("${anthropic.api.key:}")
+    private String anthropicApiKey;
 
     public UserController(UserRepository userRepository) {
         this.userRepository = userRepository;
@@ -614,6 +621,107 @@ public class UserController {
         }
         int score = stars * 20 + solved * 5;
         return new int[]{score, solved};
+    }
+
+    // Real AI Career Coach — Claude (Anthropic) se personalized insights
+    @PostMapping("/ai-coach")
+    public ResponseEntity<?> aiCoach(@RequestBody(required = false) Map<String, Object> reqBody) {
+        if (anthropicApiKey == null || anthropicApiKey.isBlank()) {
+            HashMap<String, Object> err = new HashMap<>();
+            err.put("error", "AI coach not configured");
+            return ResponseEntity.status(503).body(err);
+        }
+
+        String email = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        // Stats summary banao
+        StringBuilder stats = new StringBuilder();
+        stats.append("Name: ").append(user.getName()).append("\n");
+        stats.append("Dev Score: ").append(user.getScore()).append("\n");
+        stats.append("Global Rank: #").append(user.getRank()).append("\n");
+        stats.append("Total problems solved: ").append(user.getProblems()).append("\n");
+        stats.append("Current streak: ").append(user.getStreak()).append(" days\n");
+        stats.append("Connected platforms: ");
+        List<String> platforms = new ArrayList<>();
+        if (user.getGithubUsername() != null && !user.getGithubUsername().isBlank()) platforms.add("GitHub");
+        if (user.getLeetcodeUsername() != null && !user.getLeetcodeUsername().isBlank()) platforms.add("LeetCode");
+        if (user.getCodeforcesUsername() != null && !user.getCodeforcesUsername().isBlank()) platforms.add("Codeforces");
+        if (user.getHackerrankUsername() != null && !user.getHackerrankUsername().isBlank()) platforms.add("HackerRank");
+        stats.append(platforms.isEmpty() ? "none" : String.join(", ", platforms)).append("\n");
+        if (reqBody != null && reqBody.get("breakdown") != null) {
+            stats.append("Score breakdown by platform: ").append(reqBody.get("breakdown")).append("\n");
+        }
+
+        String system = "You are an expert developer career coach. Given a developer's real coding stats "
+                + "across GitHub, LeetCode, Codeforces and HackerRank, give sharp, specific, encouraging career advice.";
+        String userPrompt = "Here are the developer's real stats:\n" + stats
+                + "\nGive: (1) their single biggest strength, (2) the most important area to improve, "
+                + "(3) two concrete next steps, (4) a one-line interview-readiness verdict. "
+                + "Address them as 'you'. Keep it under 180 words, use short bullet points.";
+
+        try {
+            ObjectMapper om = new ObjectMapper();
+            ObjectNode root = om.createObjectNode();
+            root.put("model", "claude-opus-5");
+            root.put("max_tokens", 2048);
+            root.put("system", system);
+            ObjectNode outputConfig = root.putObject("output_config");
+            outputConfig.put("effort", "low");
+            ArrayNode messages = root.putArray("messages");
+            ObjectNode msg = messages.addObject();
+            msg.put("role", "user");
+            msg.put("content", userPrompt);
+
+            String respBody = anthropicPost(om.writeValueAsString(root));
+            JsonNode d = om.readTree(respBody);
+
+            StringBuilder out = new StringBuilder();
+            for (JsonNode block : d.path("content")) {
+                if ("text".equals(block.path("type").asText())) {
+                    out.append(block.path("text").asText());
+                }
+            }
+            if (out.length() == 0) {
+                HashMap<String, Object> err = new HashMap<>();
+                err.put("error", "AI returned no text: " + d.path("error").path("message").asText("unknown"));
+                return ResponseEntity.status(502).body(err);
+            }
+
+            HashMap<String, Object> res = new HashMap<>();
+            res.put("insights", out.toString());
+            return ResponseEntity.ok(res);
+
+        } catch (Exception e) {
+            HashMap<String, Object> err = new HashMap<>();
+            err.put("error", "AI request failed: " + e.getMessage());
+            return ResponseEntity.status(502).body(err);
+        }
+    }
+
+    // Anthropic Messages API POST (x-api-key auth)
+    private String anthropicPost(String jsonBody) throws IOException {
+        URL url = new URL("https://api.anthropic.com/v1/messages");
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("x-api-key", anthropicApiKey);
+        conn.setRequestProperty("anthropic-version", "2023-06-01");
+        conn.setDoOutput(true);
+        conn.setConnectTimeout(10000);
+        conn.setReadTimeout(90000);
+        conn.getOutputStream().write(jsonBody.getBytes(StandardCharsets.UTF_8));
+
+        int status = conn.getResponseCode();
+        InputStream is = (status >= 200 && status < 400) ? conn.getInputStream() : conn.getErrorStream();
+        StringBuilder sb = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line);
+        }
+        return sb.toString();
     }
 
     // Search users by name
