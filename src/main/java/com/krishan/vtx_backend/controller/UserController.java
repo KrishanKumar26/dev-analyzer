@@ -54,10 +54,6 @@ public class UserController {
         response.put("leetcodeUsername", user.getLeetcodeUsername() != null ? user.getLeetcodeUsername() : "");
         response.put("codeforcesUsername", user.getCodeforcesUsername() != null ? user.getCodeforcesUsername() : "");
         response.put("hackerrankUsername", user.getHackerrankUsername() != null ? user.getHackerrankUsername() : "");
-        response.put("githubScore", user.getGithubScore());
-        response.put("leetcodeScore", user.getLeetcodeScore());
-        response.put("codeforcesScore", user.getCodeforcesScore());
-        response.put("hackerrankScore", user.getHackerrankScore());
         return ResponseEntity.ok(response);
     }
 
@@ -381,12 +377,11 @@ public class UserController {
         int score = 0;
         int problems = 0;
         HashMap<String, Object> breakdown = new HashMap<>();
-
-        // Har sync pe per-platform score reset (disconnect/change ke baad stale na rahe)
-        user.setGithubScore(0);
-        user.setLeetcodeScore(0);
-        user.setCodeforcesScore(0);
-        user.setHackerrankScore(0);
+        // Breakdown ke saare platforms 0 se shuru (frontend chart ke liye consistent)
+        breakdown.put("github", 0);
+        breakdown.put("leetcode", 0);
+        breakdown.put("codeforces", 0);
+        breakdown.put("hackerrank", 0);
 
         // LeetCode
         if (user.getLeetcodeUsername() != null && !user.getLeetcodeUsername().isBlank()) {
@@ -394,7 +389,6 @@ public class UserController {
                 int[] lc = leetcodeStats(user.getLeetcodeUsername());
                 score += lc[0];
                 problems += lc[1];
-                user.setLeetcodeScore(lc[0]);
                 breakdown.put("leetcode", lc[0]);
             } catch (Exception ignore) { }
         }
@@ -404,7 +398,6 @@ public class UserController {
                 int[] cf = codeforcesStats(user.getCodeforcesUsername());
                 score += cf[0];
                 problems += cf[1];
-                user.setCodeforcesScore(cf[0]);
                 breakdown.put("codeforces", cf[0]);
             } catch (Exception ignore) { }
         }
@@ -413,7 +406,6 @@ public class UserController {
             try {
                 int gh = githubScore(user.getGithubUsername());
                 score += gh;
-                user.setGithubScore(gh);
                 breakdown.put("github", gh);
             } catch (Exception ignore) { }
         }
@@ -423,7 +415,6 @@ public class UserController {
                 int[] hr = hackerrankStats(user.getHackerrankUsername());
                 score += hr[0];
                 problems += hr[1];
-                user.setHackerrankScore(hr[0]);
                 breakdown.put("hackerrank", hr[0]);
             } catch (Exception ignore) { }
         }
