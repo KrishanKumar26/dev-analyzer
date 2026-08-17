@@ -676,17 +676,17 @@ public class UserController {
             content.put("role", "user");
             content.putArray("parts").addObject().put("text", userPrompt);
 
-            // Generation config — thinking off + bigger budget so the answer isn't truncated
+            // Generation config — big budget so internal thinking + answer both fit (no truncation)
             ObjectNode genConfig = root.putObject("generationConfig");
-            genConfig.put("maxOutputTokens", 1200);
+            genConfig.put("maxOutputTokens", 4096);
             genConfig.put("temperature", 0.7);
-            genConfig.putObject("thinkingConfig").put("thinkingBudget", 0);
 
             String respBody = geminiPost(om.writeValueAsString(root));
             JsonNode d = om.readTree(respBody);
 
             StringBuilder out = new StringBuilder();
             for (JsonNode part : d.path("candidates").path(0).path("content").path("parts")) {
+                if (part.path("thought").asBoolean(false)) continue; // skip internal thinking parts
                 out.append(part.path("text").asText());
             }
             if (out.length() == 0) {
