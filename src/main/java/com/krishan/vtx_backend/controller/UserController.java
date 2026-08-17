@@ -676,10 +676,11 @@ public class UserController {
             content.put("role", "user");
             content.putArray("parts").addObject().put("text", userPrompt);
 
-            // Generation config
+            // Generation config — thinking off + bigger budget so the answer isn't truncated
             ObjectNode genConfig = root.putObject("generationConfig");
-            genConfig.put("maxOutputTokens", 600);
+            genConfig.put("maxOutputTokens", 1200);
             genConfig.put("temperature", 0.7);
+            genConfig.putObject("thinkingConfig").put("thinkingBudget", 0);
 
             String respBody = geminiPost(om.writeValueAsString(root));
             JsonNode d = om.readTree(respBody);
