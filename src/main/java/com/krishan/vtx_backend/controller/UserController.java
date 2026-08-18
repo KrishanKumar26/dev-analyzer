@@ -724,6 +724,78 @@ public class UserController {
         }
     }
 
+    // AI Resume/Portfolio generator — Gemini se recruiter-ready resume text (plain, PDF-friendly)
+    @PostMapping("/ai-resume")
+    public ResponseEntity<?> aiResume(@RequestBody(required = false) Map<String, Object> reqBody) {
+        if (geminiApiKey == null || geminiApiKey.isBlank()) {
+            HashMap<String, Object> err = new HashMap<>();
+            err.put("error", "AI not configured");
+            return ResponseEntity.status(503).body(err);
+        }
+        String email = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        StringBuilder stats = new StringBuilder();
+        stats.append("Name: ").append(user.getName()).append("\n");
+        stats.append("Dev Score: ").append(user.getScore()).append("\n");
+        stats.append("Global Rank: #").append(user.getRank()).append("\n");
+        stats.append("Total problems solved: ").append(user.getProblems()).append("\n");
+        stats.append("Current streak: ").append(user.getStreak()).append(" days\n");
+        List<String> platforms = new ArrayList<>();
+        if (user.getGithubUsername() != null && !user.getGithubUsername().isBlank()) platforms.add("GitHub (@" + user.getGithubUsername() + ")");
+        if (user.getLeetcodeUsername() != null && !user.getLeetcodeUsername().isBlank()) platforms.add("LeetCode (@" + user.getLeetcodeUsername() + ")");
+        if (user.getCodeforcesUsername() != null && !user.getCodeforcesUsername().isBlank()) platforms.add("Codeforces (@" + user.getCodeforcesUsername() + ")");
+        if (user.getHackerrankUsername() != null && !user.getHackerrankUsername().isBlank()) platforms.add("HackerRank (@" + user.getHackerrankUsername() + ")");
+        stats.append("Platforms: ").append(platforms.isEmpty() ? "none" : String.join(", ", platforms)).append("\n");
+        if (reqBody != null && reqBody.get("breakdown") != null) {
+            stats.append("Score breakdown by platform: ").append(reqBody.get("breakdown")).append("\n");
+        }
+
+        String system = "You are a professional resume writer for software engineers. "
+                + "Output PLAIN TEXT ONLY — absolutely no markdown symbols (no **, no #, no backticks, no dashes as bullets; use a simple bullet character). "
+                + "Use UPPERCASE section headers. Do not invent facts beyond the given stats.";
+        String userPrompt = "Create a concise, recruiter-ready developer resume from these REAL verified coding stats:\n" + stats
+                + "\nSections in this exact order (plain text):\n"
+                + "PROFESSIONAL SUMMARY (2-3 sentences)\n"
+                + "TECHNICAL STRENGTHS\n"
+                + "COMPETITIVE PROGRAMMING (highlight the numbers)\n"
+                + "KEY HIGHLIGHTS (3-4 impressive points)\n"
+                + "Keep the whole resume under 250 words. Confident, professional tone.";
+
+        try {
+            ObjectMapper om = new ObjectMapper();
+            ObjectNode root = om.createObjectNode();
+            root.putObject("systemInstruction").putArray("parts").addObject().put("text", system);
+            ObjectNode content = root.putArray("contents").addObject();
+            content.put("role", "user");
+            content.putArray("parts").addObject().put("text", userPrompt);
+            ObjectNode genConfig = root.putObject("generationConfig");
+            genConfig.put("maxOutputTokens", 4096);
+            genConfig.put("temperature", 0.6);
+
+            JsonNode d = om.readTree(geminiPost(om.writeValueAsString(root)));
+            StringBuilder out = new StringBuilder();
+            for (JsonNode part : d.path("candidates").path(0).path("content").path("parts")) {
+                if (part.path("thought").asBoolean(false)) continue;
+                out.append(part.path("text").asText());
+            }
+            if (out.length() == 0) {
+                HashMap<String, Object> err = new HashMap<>();
+                err.put("error", "AI returned no text: " + d.path("error").path("message").asText("unknown"));
+                return ResponseEntity.status(502).body(err);
+            }
+            HashMap<String, Object> res = new HashMap<>();
+            res.put("resume", out.toString());
+            return ResponseEntity.ok(res);
+        } catch (Exception e) {
+            HashMap<String, Object> err = new HashMap<>();
+            err.put("error", "AI request failed: " + e.getMessage());
+            return ResponseEntity.status(502).body(err);
+        }
+    }
+
     // Google Gemini generateContent POST (API key as query param)
     private String geminiPost(String jsonBody) throws IOException {
         URL url = new URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key="
