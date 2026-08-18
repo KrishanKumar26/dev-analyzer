@@ -818,6 +818,45 @@ public class UserController {
         return sb.toString();
     }
 
+    // AtCoder Real Data API (free, no key) — kenkoooo (AC count) + AtCoder (rating)
+    @GetMapping("/atcoder/{username}")
+    public ResponseEntity<?> atcoderUser(@PathVariable String username) {
+        try {
+            ObjectMapper om = new ObjectMapper();
+            int accepted = 0;
+            try {
+                JsonNode info = om.readTree(httpGet(
+                        "https://kenkoooo.com/atcoder/atcoder-api/v2/user_info?user=" + username));
+                accepted = info.path("accepted_count").asInt(0);
+            } catch (Exception ignore) { }
+
+            int rating = 0;
+            try {
+                JsonNode hist = om.readTree(httpGet(
+                        "https://atcoder.jp/users/" + username + "/history/json"));
+                if (hist.isArray() && hist.size() > 0) {
+                    rating = hist.get(hist.size() - 1).path("NewRating").asInt(0);
+                }
+            } catch (Exception ignore) { }
+
+            if (accepted == 0 && rating == 0) {
+                HashMap<String, Object> err = new HashMap<>();
+                err.put("error", "AtCoder user not found");
+                return ResponseEntity.status(404).body(err);
+            }
+
+            HashMap<String, Object> res = new HashMap<>();
+            res.put("username", username);
+            res.put("acceptedCount", accepted);
+            res.put("rating", rating);
+            return ResponseEntity.ok(res);
+        } catch (Exception e) {
+            HashMap<String, Object> err = new HashMap<>();
+            err.put("error", "AtCoder fetch failed: " + e.getMessage());
+            return ResponseEntity.status(502).body(err);
+        }
+    }
+
     // Growth history — user ke daily score snapshots (chart ke liye)
     @GetMapping("/history")
     public ResponseEntity<?> history() {
