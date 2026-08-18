@@ -30,6 +30,7 @@ import java.util.Set;
 public class UserController {
 
     private final UserRepository userRepository;
+    private final com.krishan.vtx_backend.repository.ScoreSnapshotRepository snapshotRepo;
 
     // Optional GitHub token: agar set hai to 5000 req/hour, warna sirf 60/hour (rate-limited)
     @Value("${github.token:}")
@@ -39,8 +40,10 @@ public class UserController {
     @Value("${gemini.api.key:}")
     private String geminiApiKey;
 
-    public UserController(UserRepository userRepository) {
+    public UserController(UserRepository userRepository,
+                          com.krishan.vtx_backend.repository.ScoreSnapshotRepository snapshotRepo) {
         this.userRepository = userRepository;
+        this.snapshotRepo = snapshotRepo;
     }
 
     @GetMapping("/profile")
@@ -468,6 +471,21 @@ public class UserController {
             userRepository.save(allUsers.get(i));
         }
 
+        // Aaj ka growth snapshot record karo (ek din me ek — upsert)
+        try {
+            String today = java.time.LocalDate.now().toString();
+            com.krishan.vtx_backend.model.ScoreSnapshot snap = snapshotRepo
+                    .findByUserEmailAndSnapDate(email, today)
+                    .orElseGet(com.krishan.vtx_backend.model.ScoreSnapshot::new);
+            snap.setUserEmail(email);
+            snap.setSnapDate(today);
+            snap.setScore(user.getScore());
+            snap.setProblems(user.getProblems());
+            snap.setRank(user.getRank());
+            snap.setStreak(user.getStreak());
+            snapshotRepo.save(snap);
+        } catch (Exception ignore) { }
+
         HashMap<String, Object> res = new HashMap<>();
         res.put("message", "Stats synced from your platforms!");
         res.put("score", user.getScore());
@@ -726,6 +744,25 @@ public class UserController {
             while ((line = reader.readLine()) != null) sb.append(line);
         }
         return sb.toString();
+    }
+
+    // Growth history — user ke daily score snapshots (chart ke liye)
+    @GetMapping("/history")
+    public ResponseEntity<?> history() {
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        List<com.krishan.vtx_backend.model.ScoreSnapshot> snaps =
+                snapshotRepo.findByUserEmailOrderBySnapDateAsc(email);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (com.krishan.vtx_backend.model.ScoreSnapshot s : snaps) {
+            HashMap<String, Object> m = new HashMap<>();
+            m.put("date", s.getSnapDate());
+            m.put("score", s.getScore());
+            m.put("problems", s.getProblems());
+            m.put("rank", s.getRank());
+            m.put("streak", s.getStreak());
+            out.add(m);
+        }
+        return ResponseEntity.ok(out);
     }
 
     // Upcoming coding contests (Codeforces) — for the contest calendar
