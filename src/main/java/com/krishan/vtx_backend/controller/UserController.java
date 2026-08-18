@@ -728,6 +728,69 @@ public class UserController {
         return sb.toString();
     }
 
+    // Upcoming coding contests (Codeforces) — for the contest calendar
+    @GetMapping("/contests")
+    public ResponseEntity<?> contests() {
+        try {
+            ObjectMapper om = new ObjectMapper();
+            JsonNode d = om.readTree(httpGet("https://codeforces.com/api/contest.list?gym=false"));
+            List<Map<String, Object>> upcoming = new ArrayList<>();
+            if ("OK".equals(d.path("status").asText())) {
+                for (JsonNode c : d.path("result")) {
+                    if ("BEFORE".equals(c.path("phase").asText())) {
+                        HashMap<String, Object> m = new HashMap<>();
+                        m.put("name", c.path("name").asText());
+                        m.put("startTimeSeconds", c.path("startTimeSeconds").asLong(0));
+                        m.put("durationSeconds", c.path("durationSeconds").asLong(0));
+                        m.put("url", "https://codeforces.com/contests");
+                        upcoming.add(m);
+                    }
+                }
+            }
+            upcoming.sort((a, b) -> Long.compare(
+                    ((Number) a.get("startTimeSeconds")).longValue(),
+                    ((Number) b.get("startTimeSeconds")).longValue()));
+            if (upcoming.size() > 12) upcoming = new ArrayList<>(upcoming.subList(0, 12));
+            return ResponseEntity.ok(upcoming);
+        } catch (Exception e) {
+            return ResponseEntity.ok(new ArrayList<>());
+        }
+    }
+
+    // Skill radar — Codeforces solved-problem tags se topic-wise strength
+    @GetMapping("/skill-radar/{handle}")
+    public ResponseEntity<?> skillRadar(@PathVariable String handle) {
+        try {
+            ObjectMapper om = new ObjectMapper();
+            JsonNode d = om.readTree(httpGet(
+                    "https://codeforces.com/api/user.status?handle=" + handle + "&from=1&count=10000"));
+            if (!"OK".equals(d.path("status").asText())) {
+                return ResponseEntity.status(404).body(Map.of("error", "Codeforces user not found"));
+            }
+            Map<String, Set<String>> tagProblems = new HashMap<>();
+            for (JsonNode s : d.path("result")) {
+                if (!"OK".equals(s.path("verdict").asText())) continue;
+                JsonNode p = s.path("problem");
+                String key = p.path("contestId").asText() + p.path("index").asText();
+                for (JsonNode tag : p.path("tags")) {
+                    tagProblems.computeIfAbsent(tag.asText(), k -> new HashSet<>()).add(key);
+                }
+            }
+            List<Map<String, Object>> radar = new ArrayList<>();
+            for (Map.Entry<String, Set<String>> e : tagProblems.entrySet()) {
+                HashMap<String, Object> m = new HashMap<>();
+                m.put("tag", e.getKey());
+                m.put("count", e.getValue().size());
+                radar.add(m);
+            }
+            radar.sort((a, b) -> ((Number) b.get("count")).intValue() - ((Number) a.get("count")).intValue());
+            if (radar.size() > 8) radar = new ArrayList<>(radar.subList(0, 8));
+            return ResponseEntity.ok(radar);
+        } catch (Exception e) {
+            return ResponseEntity.status(502).body(Map.of("error", "Skill radar failed: " + e.getMessage()));
+        }
+    }
+
     // Search users by name
     @GetMapping("/search")
     public ResponseEntity<?> searchUsers(@RequestParam String query) {
